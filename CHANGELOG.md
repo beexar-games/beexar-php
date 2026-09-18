@@ -4,7 +4,13 @@ All notable changes to `beexar/sdk`. The version is shared across the Beexar SDK
 for Node, PHP, Go and Python — the same number always means the same contract
 snapshot.
 
-## 1.0.0 — unreleased
+## 1.0.1 — 2026-09-18
+
+No change to the code you consume. The release exists to move publishing onto
+npm's and PyPI's trusted publishing, so no long-lived registry token is stored
+anywhere any more.
+
+## 1.0.0 — 2026-09-18
 
 First public release.
 
