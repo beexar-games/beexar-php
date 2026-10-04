@@ -4,7 +4,7 @@ Beexar operator SDK for PHP. Launch game sessions, and serve the four
 seamless-wallet callbacks the platform calls during play.
 
 **Zero runtime dependencies** — no bcmath, no gmp, no HTTP client required.
-PHP 8.1+.
+PHP 8.3+.
 
 ```bash
 composer require beexar/sdk

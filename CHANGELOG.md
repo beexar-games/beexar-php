@@ -4,6 +4,12 @@ All notable changes to `beexar/sdk`. The version is shared across the Beexar SDK
 for Node, PHP, Go and Python — the same number always means the same contract
 snapshot.
 
+## 1.1.0 — 2026-10-04
+
+PHP 8.3 or newer, up from 8.1: 8.1 is past end of life upstream and 8.2 leaves
+security support on 2026-12-31. Composer on an older PHP keeps resolving 1.0.2.
+No change to the API.
+
 ## 1.0.2 — 2026-09-18
 
 No change to the code you consume. 1.0.1 reached PyPI, Packagist and the Go
