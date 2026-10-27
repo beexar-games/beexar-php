@@ -100,6 +100,24 @@ final class WalletError extends \RuntimeException
         return self::client(ApiCode::ALREADY_ROLLED_BACK, $message);
     }
 
+    // --- freespins ---------------------------------------------------------
+
+    /** api_code 610: /freespins/finish names an issue_id you never issued. */
+    public static function invalidFreespinsIssue(string $message = 'invalid freespins issue'): self
+    {
+        return self::client(ApiCode::FREESPINS_INVALID_ISSUE, $message);
+    }
+
+    /**
+     * api_code 605: the issue cannot take this result in its current state —
+     * on /freespins/finish, an issue you canceled.
+     */
+    public static function freespinsStateTransition(
+        string $message = "can't change issue state from its current to requested",
+    ): self {
+        return self::client(ApiCode::FREESPINS_STATE_TRANSITION, $message);
+    }
+
     // --- server ------------------------------------------------------------
 
     public static function internal(string $message = 'internal error'): self

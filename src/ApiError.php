@@ -6,7 +6,8 @@ namespace Beexar;
 
 /**
  * An error answer from the Beexar gateway to one of YOUR calls
- * (launchReal, launchDemo, listGames).
+ * (launchReal, launchDemo, listGames, issueFreespins, cancelFreespins,
+ * betLevels).
  */
 final class ApiError extends \RuntimeException
 {

@@ -8,12 +8,13 @@ use Beexar\Wallet\BalanceRequest;
 use Beexar\Wallet\BetWinRequest;
 use Beexar\Wallet\BetWinTransaction;
 use Beexar\Wallet\FinishRequest;
+use Beexar\Wallet\FreespinsFinishRequest;
 use Beexar\Wallet\RequestContext;
 use Beexar\Wallet\RollbackRequest;
 use Beexar\Wallet\RollbackTransaction;
 
 /**
- * Turns the four callbacks into one pure function.
+ * Turns the callbacks into one pure function.
  *
  * dispatch() takes bytes and a signature and returns a status and a body. No
  * framework type crosses that boundary and it never sees a parsed body from the
@@ -33,7 +34,21 @@ final class WalletServer
     public const ROUTE_ROLLBACK = '/rollback';
     public const ROUTE_FINISH = '/finish';
 
-    public const ROUTES = [self::ROUTE_BALANCE, self::ROUTE_BETWIN, self::ROUTE_ROLLBACK, self::ROUTE_FINISH];
+    /**
+     * Served only by a handler that also implements FreespinsFinishHandler —
+     * a wallet that issues freespins.
+     */
+    public const ROUTE_FREESPINS_FINISH = '/freespins/finish';
+
+    public const ROUTES = [
+        self::ROUTE_BALANCE,
+        self::ROUTE_BETWIN,
+        self::ROUTE_ROLLBACK,
+        self::ROUTE_FINISH,
+        self::ROUTE_FREESPINS_FINISH,
+    ];
+
+    private const FREESPINS_NOT_IMPLEMENTED = 'freespins finish is not implemented by this wallet';
 
     /** @var callable(string): void */
     private $warn;
@@ -59,11 +74,13 @@ final class WalletServer
     }
 
     /**
-     * Maps a request path to one of the four callback routes.
+     * Maps a request path to one of the callback routes.
      *
      * Matching is on the SUFFIX because the mount path belongs to you: the
      * gateway POSTs to the full callback URL configured in the backoffice,
-     * prefix and all, so /api/v2/psp/betwin is as valid as /betwin.
+     * prefix and all, so /api/v2/psp/betwin is as valid as /betwin. The longest
+     * route wins, so /wallet/freespins/finish is the freespins result and never
+     * the round's /finish.
      */
     public static function routeFromPath(string $path): ?string
     {
@@ -71,7 +88,12 @@ final class WalletServer
         if ($clean === '') {
             $clean = '/';
         }
-        foreach (self::ROUTES as $route) {
+
+        // /freespins/finish ends with /finish too, so a suffix match has to try
+        // it before the shorter route it contains.
+        $routes = self::ROUTES;
+        usort($routes, static fn (string $a, string $b): int => \strlen($b) <=> \strlen($a));
+        foreach ($routes as $route) {
             if ($clean === $route || str_ends_with($clean, $route)) {
                 return $route;
             }
@@ -92,6 +114,11 @@ final class WalletServer
         try {
             if (!\in_array($route, self::ROUTES, true)) {
                 throw WalletError::notFound(sprintf('unknown route: %s', $route));
+            }
+            if ($route === self::ROUTE_FREESPINS_FINISH && !$this->handler instanceof FreespinsFinishHandler) {
+                // An operator that does not issue freespins has nothing to
+                // settle; the route answers the way an unknown one does.
+                throw WalletError::notFound(self::FREESPINS_NOT_IMPLEMENTED);
             }
             if (\strlen($rawBody) > $this->maxBodyBytes) {
                 throw WalletError::badRequest('request body too large');
@@ -204,10 +231,22 @@ final class WalletServer
                     'transactions' => $transactions,
                 ];
 
-            default:
+            case self::ROUTE_FINISH:
                 $result = $this->handler->finish(self::parseFinish($body), $context);
 
                 return ['balance' => (string) $result->balance];
+
+            case self::ROUTE_FREESPINS_FINISH:
+                $request = self::parseFreespinsFinish($body);
+                if (!$this->handler instanceof FreespinsFinishHandler) {
+                    throw WalletError::notFound(self::FREESPINS_NOT_IMPLEMENTED);
+                }
+                $result = $this->handler->freespinsFinish($request, $context);
+
+                return ['balance' => (string) $result->balance];
+
+            default:
+                throw WalletError::notFound(sprintf('unknown route: %s', $route));
         }
     }
 
@@ -332,6 +371,21 @@ final class WalletServer
             self::requireString($body, 'round_id'),
             self::optionalString($body, 'session_id'),
         );
+    }
+
+    /** @param array<string, mixed> $body */
+    private static function parseFreespinsFinish(array $body): FreespinsFinishRequest
+    {
+        $issueId = self::requireString($body, 'issue_id');
+
+        // Zero is a valid result here — the freespins won nothing — so unlike a
+        // /betwin amount it is not refused. The shape rules are the same.
+        $amount = Money::tryParse($body['amount'] ?? null);
+        if ($amount === null) {
+            throw WalletError::badRequest('amount: not a valid decimal amount');
+        }
+
+        return new FreespinsFinishRequest($issueId, $amount);
     }
 
     /** @param array<string, mixed> $body */

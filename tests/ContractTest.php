@@ -63,6 +63,7 @@ final class ContractTest extends TestCase
             'RoundBetWinRequestTransaction' => ['amount', 'id_provider', 'type'],
             'RoundRollbackRequestTransaction' => ['id_provider', 'original_id_provider', 'type'],
             'RoundFinishRequest' => ['account_id', 'currency', 'round_id'],
+            'FreespinsFinishRequest' => ['amount', 'issue_id'],
         ];
 
         foreach ($expected as $schema => $required) {
@@ -97,6 +98,7 @@ final class ContractTest extends TestCase
             'RoundBetWinRequestTransaction' => ['RoundBetWinRequestTransaction', \Beexar\Wallet\BetWinTransaction::class],
             'RoundRollbackRequest' => ['RoundRollbackRequest', \Beexar\Wallet\RollbackRequest::class],
             'RoundFinishRequest' => ['RoundFinishRequest', \Beexar\Wallet\FinishRequest::class],
+            'FreespinsFinishRequest' => ['FreespinsFinishRequest', \Beexar\Wallet\FreespinsFinishRequest::class],
         ];
     }
 
@@ -139,9 +141,17 @@ final class ContractTest extends TestCase
         self::assertSame($fromSpec, \Beexar\Currency::PATTERN_SOURCE);
     }
 
-    public function testRoutesAreTheFourTheContractDefines(): void
+    public function testRoutesAreTheFiveTheContractDefines(): void
     {
-        self::assertSame(['/balance', '/betwin', '/rollback', '/finish'], WalletServer::ROUTES);
+        self::assertSame(['/balance', '/betwin', '/rollback', '/finish', '/freespins/finish'], WalletServer::ROUTES);
+
+        // The fifth answers the spec's FreespinsFinishResponse, which the
+        // server builds as a lone balance.
+        $raw = file_get_contents(Fixtures::root() . '/contract.json');
+        self::assertIsString($raw);
+        $wallet = json_decode($raw, true, 512, JSON_THROW_ON_ERROR)['schemas']['wallet'];
+        self::assertArrayHasKey('FreespinsFinishResponse', $wallet);
+        self::assertSame(['balance'], $wallet['FreespinsFinishResponse']['required']);
     }
 
     public function testFundsRelatedCodesAreExactlyTheThree(): void
@@ -151,7 +161,10 @@ final class ContractTest extends TestCase
         foreach ([ApiCode::INSUFFICIENT_FUNDS, ApiCode::BET_LIMIT_REACHED, ApiCode::MAX_BET_EXCEEDED] as $code) {
             self::assertTrue(ApiCode::isFundsRelated($code), "api_code {$code} must carry a balance");
         }
-        foreach ([ApiCode::INVALID_PLAYER, ApiCode::FORBIDDEN, ApiCode::ALREADY_ROLLED_BACK, ApiCode::BAD_REQUEST] as $code) {
+        foreach ([
+            ApiCode::INVALID_PLAYER, ApiCode::FORBIDDEN, ApiCode::ALREADY_ROLLED_BACK, ApiCode::BAD_REQUEST,
+            ApiCode::FREESPINS_INVALID_ISSUE, ApiCode::FREESPINS_STATE_TRANSITION,
+        ] as $code) {
             self::assertFalse(ApiCode::isFundsRelated($code), "api_code {$code} must not require a balance");
         }
     }

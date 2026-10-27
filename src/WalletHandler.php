@@ -21,6 +21,8 @@ use Beexar\Wallet\RollbackResult;
  *
  * Throw a WalletError to answer with a specific api_code. Anything else you
  * throw becomes an opaque 500 and its message never leaves your process.
+ *
+ * A wallet that issues freespins implements FreespinsFinishHandler as well.
  */
 interface WalletHandler
 {

@@ -45,6 +45,21 @@ final class ApiCode
     public const SERVICE_UNAVAILABLE = '503';
     public const REQUEST_TIMEOUT = '504';
 
+    // Freespins. Beexar answers your issueFreespins() / cancelFreespins() with
+    // 405, 406 and the 6xx codes; your /freespins/finish answers 610 for an
+    // issue you never issued and 605 for one you canceled.
+    /** This feature is not enabled for your casino. */
+    public const FREESPINS_NOT_AVAILABLE = '406';
+    public const FREESPINS_IMPOSSIBLE = '601';
+    public const FREESPINS_NO_GAME = '602';
+    public const FREESPINS_BAD_EXPIRATION = '603';
+    public const FREESPINS_STATE_TRANSITION = '605';
+    /** Feature is not supported for the requested game. */
+    public const FEATURE_NOT_SUPPORTED = '608';
+    public const FREESPINS_INVALID_ISSUE = '610';
+    public const FREESPINS_EXPIRED = '611';
+    public const FREESPINS_CANT_CANCEL = '620';
+
     public const TWIRP_INVALID_ARGUMENT = 'invalid_argument';
     public const TWIRP_INTERNAL = 'internal';
 

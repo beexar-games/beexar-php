@@ -13,7 +13,8 @@ use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
 /**
- * PSR-15 middleware serving the four callbacks.
+ * PSR-15 middleware serving the callbacks — the four round callbacks and
+ * /freespins/finish.
  *
  * ```php
  * $app->add(new WalletMiddleware($server, $responseFactory));

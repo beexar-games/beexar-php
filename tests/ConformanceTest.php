@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Beexar\Tests;
 
 use Beexar\Examples\InMemoryWallet;
+use Beexar\FreespinsFinishHandler;
 use Beexar\Signature;
 use Beexar\Wallet\BalanceRequest;
 use Beexar\Wallet\BalanceResult;
@@ -12,6 +13,8 @@ use Beexar\Wallet\BetWinRequest;
 use Beexar\Wallet\BetWinResult;
 use Beexar\Wallet\FinishRequest;
 use Beexar\Wallet\FinishResult;
+use Beexar\Wallet\FreespinsFinishRequest;
+use Beexar\Wallet\FreespinsFinishResult;
 use Beexar\Wallet\RequestContext;
 use Beexar\Wallet\RollbackRequest;
 use Beexar\Wallet\RollbackResult;
@@ -53,9 +56,12 @@ final class ConformanceTest extends TestCase
         $secret = self::read('secret.txt');
 
         // A fixture whose stored signature does not match its own bytes would
-        // quietly test nothing, so the suite re-derives it.
+        // quietly test nothing, so the suite re-derives it — but only a
+        // well-formed one (64 lowercase hex characters): the all-zeros `wrong`
+        // sentinel and a deliberately malformed header (0033) are the case,
+        // not a drifted fixture.
         $signature = $request['headers']['X-REQUEST-SIGN'] ?? null;
-        if ($signature !== null && $signature !== str_repeat('0', 64)) {
+        if ($signature !== null && preg_match('/^[0-9a-f]{64}\z/', $signature) === 1 && $signature !== str_repeat('0', 64)) {
             self::assertSame(Signature::sign($body, $secret), $signature, 'fixture signature does not match its own body');
         }
 
@@ -78,13 +84,18 @@ final class ConformanceTest extends TestCase
     {
         $tombstones = $ledger['tombstones'] ?? [];
         sort($tombstones);
-        ksort($ledger['accounts']);
-        ksort($ledger['transactions']);
+        $accounts = $ledger['accounts'] ?? [];
+        ksort($accounts);
+        $transactions = $ledger['transactions'] ?? [];
+        ksort($transactions);
+        $freespinsIssues = $ledger['freespins_issues'] ?? [];
+        ksort($freespinsIssues);
 
         return [
-            'accounts' => $ledger['accounts'] ?? [],
-            'transactions' => $ledger['transactions'] ?? [],
+            'accounts' => $accounts,
+            'transactions' => $transactions,
             'tombstones' => $tombstones,
+            'freespins_issues' => $freespinsIssues,
         ];
     }
 
@@ -111,7 +122,7 @@ final class ConformanceTest extends TestCase
  * "handler raised the unexpected" path is exercised without putting a test hook
  * in the reference wallet itself.
  */
-final class ExplodingWallet implements WalletHandler
+final class ExplodingWallet implements WalletHandler, FreespinsFinishHandler
 {
     public function __construct(private readonly InMemoryWallet $wallet)
     {
@@ -139,5 +150,10 @@ final class ExplodingWallet implements WalletHandler
     public function finish(FinishRequest $request, RequestContext $context): FinishResult
     {
         return $this->wallet->finish($request, $context);
+    }
+
+    public function freespinsFinish(FreespinsFinishRequest $request, RequestContext $context): FreespinsFinishResult
+    {
+        return $this->wallet->freespinsFinish($request, $context);
     }
 }

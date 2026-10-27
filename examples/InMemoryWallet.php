@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Beexar\Examples;
 
+use Beexar\FreespinsFinishHandler;
 use Beexar\Money;
 use Beexar\Wallet\BalanceRequest;
 use Beexar\Wallet\BalanceResult;
@@ -13,6 +14,8 @@ use Beexar\Wallet\BetWinTransaction;
 use Beexar\Wallet\BetWinTransactionResult;
 use Beexar\Wallet\FinishRequest;
 use Beexar\Wallet\FinishResult;
+use Beexar\Wallet\FreespinsFinishRequest;
+use Beexar\Wallet\FreespinsFinishResult;
 use Beexar\Wallet\RequestContext;
 use Beexar\Wallet\RollbackRequest;
 use Beexar\Wallet\RollbackResult;
@@ -37,13 +40,21 @@ use Beexar\WalletHandler;
  *     none does, and an insufficient-funds answer reports the balance as it was
  *     BEFORE the batch — because nothing moved.
  *
+ * Freespins follow the same discipline with issue_id as the key: record the
+ * issue before you send Freespins/Issue, credit its /freespins/finish once, and
+ * answer a repeat with the balance you stored the first time.
+ *
  * In a real wallet all three must happen inside ONE database transaction, with
  * the id_provider under a unique index. That is why the SDK does not offer to
  * do idempotency for you: it cannot join your transaction, so it could only
  * pretend.
  */
-final class InMemoryWallet implements WalletHandler
+final class InMemoryWallet implements WalletHandler, FreespinsFinishHandler
 {
+    public const FREESPINS_ISSUED = 'issued';
+    public const FREESPINS_CANCELED = 'canceled';
+    public const FREESPINS_FINISHED = 'finished';
+
     /** @var array<string, array{currency: string, balance: Money, bet_limited: bool}> */
     private array $accounts = [];
 
@@ -52,6 +63,14 @@ final class InMemoryWallet implements WalletHandler
 
     /** @var array<string, true> */
     private array $tombstones = [];
+
+    /**
+     * Whose freespins each issue is — /freespins/finish does not say — and,
+     * once credited, the amount and the balance answered then.
+     *
+     * @var array<string, array{account_id: string, currency: string, status: string, amount?: string, balance_after?: string}>
+     */
+    private array $freespinsIssues = [];
 
     /** @var array<string, string> */
     private array $rounds = [];
@@ -63,7 +82,8 @@ final class InMemoryWallet implements WalletHandler
      * @param array{
      *     accounts?: array<string, array{currency: string, balance: string, bet_limited?: bool}>,
      *     transactions?: array<string, array{id: string, balance_after: string, type?: string, amount?: string}>,
-     *     tombstones?: list<string>
+     *     tombstones?: list<string>,
+     *     freespins_issues?: array<string, array{account_id: string, currency: string, status: string, amount?: string, balance_after?: string}>
      * } $state
      */
     public function __construct(array $state = [])
@@ -85,6 +105,9 @@ final class InMemoryWallet implements WalletHandler
         foreach ($state['tombstones'] ?? [] as $id) {
             $this->tombstones[$id] = true;
         }
+        foreach ($state['freespins_issues'] ?? [] as $id => $issue) {
+            $this->freespinsIssues[$id] = $issue;
+        }
         // Continue the id sequence rather than restarting it, so ids stay
         // unique across a restored state.
         $this->nextTx = $max + 1;
@@ -105,6 +128,7 @@ final class InMemoryWallet implements WalletHandler
             'accounts' => $accounts,
             'transactions' => $this->transactions,
             'tombstones' => array_keys($this->tombstones),
+            'freespins_issues' => $this->freespinsIssues,
         ];
     }
 
@@ -234,6 +258,71 @@ final class InMemoryWallet implements WalletHandler
         // Nothing to settle: the round's money already moved through betWin.
         // Answering the current balance and staying idempotent is the whole job.
         return new FinishResult($this->account($request->accountId)['balance']);
+    }
+
+    /**
+     * Records an issue BEFORE you send it with Client::issueFreespins().
+     * /freespins/finish names only the issue_id, so this record is what says
+     * whose wallet, in which currency, to credit — and a Finish can never
+     * arrive for an issue you do not know.
+     */
+    public function recordFreespinsIssue(string $issueId, string $accountId, string $currency): void
+    {
+        $this->freespinsIssues[$issueId] ??= [
+            'account_id' => $accountId,
+            'currency' => $currency,
+            'status' => self::FREESPINS_ISSUED,
+        ];
+    }
+
+    /**
+     * Marks an issue canceled once Beexar ACCEPTED your
+     * Client::cancelFreespins(). A refused cancel (620: already played out)
+     * leaves it issued, because its /freespins/finish is on its way.
+     */
+    public function cancelFreespinsIssue(string $issueId): void
+    {
+        if (($this->freespinsIssues[$issueId]['status'] ?? null) === self::FREESPINS_ISSUED) {
+            $this->freespinsIssues[$issueId]['status'] = self::FREESPINS_CANCELED;
+        }
+    }
+
+    public function freespinsFinish(FreespinsFinishRequest $request, RequestContext $context): FreespinsFinishResult
+    {
+        $issue = $this->freespinsIssues[$request->issueId] ?? null;
+        if ($issue === null) {
+            throw WalletError::invalidFreespinsIssue(sprintf('unknown freespins issue %s', $request->issueId));
+        }
+
+        // 1. Replay first, exactly as for id_provider: the platform retries
+        //    until it gets a 200, and the retry must credit nothing and answer
+        //    the balance stored the first time.
+        if ($issue['status'] === self::FREESPINS_FINISHED) {
+            if (!isset($issue['balance_after'])) {
+                // Never credit a finished issue again; a 500 makes the platform retry.
+                throw new \RuntimeException(sprintf('freespins issue %s is finished but has no stored balance', $request->issueId));
+            }
+
+            return new FreespinsFinishResult(Money::parse($issue['balance_after']));
+        }
+        // 2. A canceled issue has no result to take.
+        if ($issue['status'] === self::FREESPINS_CANCELED) {
+            throw WalletError::freespinsStateTransition(sprintf('freespins issue %s was canceled', $request->issueId));
+        }
+
+        // 3. Credit, and record the answer with the issue — one transaction in
+        //    a real ledger, like everything else here. Zero is a valid result.
+        $balance = $this->account($issue['account_id'])['balance']->add($request->amount);
+        $this->accounts[$issue['account_id']]['balance'] = $balance;
+        $this->freespinsIssues[$request->issueId] = [
+            'account_id' => $issue['account_id'],
+            'currency' => $issue['currency'],
+            'status' => self::FREESPINS_FINISHED,
+            'amount' => (string) $request->amount,
+            'balance_after' => (string) $balance,
+        ];
+
+        return new FreespinsFinishResult($balance);
     }
 
     /** @return array{currency: string, balance: Money, bet_limited: bool} */

@@ -7,7 +7,8 @@
  *
  * Point the four callback URLs in the backoffice at
  * http://<host>/{balance,betwin,rollback,finish} and run the Integration Test
- * Game against it.
+ * Game against it. If you issue freespins, point the freespins finish URL at
+ * http://<host>/freespins/finish as well.
  *
  * The ledger is kept in a JSON file, not in memory. PHP re-runs this script for
  * every request, so an in-memory wallet would forget each transaction the
